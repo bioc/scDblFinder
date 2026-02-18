@@ -91,15 +91,7 @@ The `clamulet` method (Classification-powered Amulet-like method) operates simil
 The `clamulet` method uses the aforementioned aggregation approach, and its usage includes a number of arguments from both the `scDblFinder` and `amulet` method (see in particular `?getFragmentOverlaps`):
 
 ```{r, eval=FALSE}
-# not run
 d <- clamulet("path/to/fragments.tsv.gz")
-```
-
-Since our dummy fragment file is so small (5 barcodes), here we'll have to adjust the arguments for an example to run:
-
-```{r}
-d <- clamulet(fragfile, k=2, nfeatures=3)
-d
 ```
 
 The score can then be interpreted as for `scDblFinder`. We however note that this method proved *inferior to alternatives*.
