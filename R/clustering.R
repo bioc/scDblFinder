@@ -26,7 +26,6 @@
 #' graph of (meta-)cells and the corresponding cell indexes.
 #'
 #' @importFrom igraph cluster_louvain membership
-#' @importFrom scran buildKNNGraph
 #' @importFrom stats kmeans
 #'
 #' @examples
@@ -63,19 +62,17 @@ fastcluster <- function( x, k=NULL, rdname="PCA", nstart=3, iter.max=50,
 }
 
 #' @importFrom scater runPCA
-#' @importFrom scuttle logNormCounts librarySizeFactors computeLibraryFactors
 #' @importFrom BiocSingular IrlbaParam
 #' @import SingleCellExperiment
 .prepSCE <- function(sce, ndims=30, nfeatures=1000, ...){
     if(!("logcounts" %in% assayNames(sce))){
-        if(is.null(librarySizeFactors(sce)))
-            sce <- computeLibraryFactors(sce)
-        ls <- librarySizeFactors(sce)
-        if(any(is.na(ls) | ls==0))
-            stop("Some of the size factors are invalid. Consider removing",
-                 "cells with sizeFactors of zero, or filling in the",
-                 "`logcounts' assay yourself.")
-        sce <- logNormCounts(sce)
+      cs <- Matrix::colSums(counts(sce))
+      if(!is.null(ls <- sizeFactors(sce)) && any(is.na(ls) | ls==0)){
+        stop("Some of the size factors are invalid. Consider removing",
+             "cells with sizeFactors of zero, or filling in the",
+             "`logcounts' assay yourself.")
+      }
+      sce <- logNormCounts(sce)
     }
     if(!("PCA" %in% reducedDimNames(sce))){
         sce <- runPCA(sce, ncomponents=ifelse(is.null(ndims),30,ndims),

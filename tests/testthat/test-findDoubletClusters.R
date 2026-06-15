@@ -10,6 +10,10 @@ counts.1 <- matrix(rpois(ngenes*100, mu1), nrow=ngenes)
 counts.2 <- matrix(rpois(ngenes*100, mu2), nrow=ngenes)
 counts.m <- matrix(rpois(ngenes*20, mu1+mu2), nrow=ngenes)
 
+normalizeCounts <- function(counts){
+  scrapper::normalizeCounts(counts, scrapper::centerSizeFactors(colSums(counts)))
+}
+
 counts <- cbind(counts.1, counts.2, counts.m)
 clusters <- rep(1:3, c(ncol(counts.1), ncol(counts.2), ncol(counts.m)))
 
@@ -27,6 +31,44 @@ RENAMER <- function(val, fields, mapping)
     val$all.pairs <- new.pairs
     val
 }
+
+test_that("pairwise_ttests work correctly", {
+    mat <- matrix(rnorm(20000), ncol = 100)
+    groups <- rep(LETTERS[1:6], length.out = 100)
+
+    my.groups <- sort(unique(groups))
+    ref.p <- list()
+    for (g1 in my.groups) {
+        mat1 <- mat[,groups == g1]
+
+        cur.p.all <- list() 
+        for (g2 in my.groups) {
+            if (g1 == g2) {
+                next
+            }
+            mat2 <- mat[,groups == g2]
+
+            cur.p <- numeric(nrow(mat))
+            for (r in seq_len(nrow(mat))) {
+                cur.p[r] <- t.test(mat1[r,], mat2[r,], alternative="greater")$p.value
+            }
+            cur.p.all[[g2]] <- data.frame(logFC = rowMeans(mat1) - rowMeans(mat2), log.p.value = log(cur.p))
+        }
+
+        ref.p[[g1]] <- cur.p.all
+    }
+
+    obs.p <- scDblFinder:::.pairwise_ttests(mat, groups)
+    expect_equal(ref.p, obs.p)
+})
+
+test_that("logBH works correctly", {
+    p <- runif(1000)
+    expect_equal(scDblFinder:::.logBH(log(p)), log(p.adjust(p, method="BH")))
+
+    p <- rbeta(100, 0.1, 1)
+    expect_equal(scDblFinder:::.logBH(log(p)), log(p.adjust(p, method="BH")))
+})
 
 test_that("findDoubletClusters works correctly with vanilla tests", {
     dbl <- findDoubletClusters(counts, clusters)
@@ -64,7 +106,7 @@ test_that("findDoubletClusters agrees with a reference implementation", {
     clusters <- rep(1:4, c(ncol(counts.1), ncol(counts.2), ncol(counts.3), ncol(counts.m)))
 
     dbl <- findDoubletClusters(counts, clusters, get.all.pairs=TRUE)
-    ref <- scran::findMarkers(scuttle::normalizeCounts(counts), clusters, full.stats=TRUE)
+    ref <- scDblFinder:::.pairwise_ttests(normalizeCounts(counts), clusters)
 
     for (x in rownames(dbl)) {
         stats <- ref[[x]]
@@ -73,14 +115,17 @@ test_that("findDoubletClusters agrees with a reference implementation", {
 
         # Effectively a re-implentation of the two inner loops.
         collected <- apply(combos, 2, function(chosen) {
-            fields <- paste0("stats.", chosen)
-            stats1 <- stats[[fields[1]]]
-            stats2 <- stats[[fields[2]]]
+            stats1 <- stats[[chosen[1]]]
+            stats2 <- stats[[chosen[2]]]
             p <- pmax(exp(stats1$log.p.value), exp(stats2$log.p.value))
             p[sign(stats1$logFC)!=sign(stats2$logFC)] <- 1
             adj.p <- p.adjust(p, method="BH")
-            data.frame(best=rownames(stats)[which.min(p)], p.val=min(adj.p), 
-                num.de=sum(adj.p <= 0.05), stringsAsFactors=FALSE)
+            data.frame(
+                best = which.min(p),
+                p.val = min(adj.p), 
+                num.de = sum(adj.p <= 0.05),
+                stringsAsFactors = FALSE
+            )
         })
 
         collected <- do.call(rbind, collected)
@@ -105,7 +150,13 @@ test_that("findDoubletClusters works correctly with row subsets", {
     chosen <- sample(ngenes, 20)
     dbl0 <- findDoubletClusters(counts, clusters, subset.row=chosen)
     ref <- findDoubletClusters(counts[chosen,], clusters)
-    ref <- RENAMER(ref, "best", as.character(chosen))
+    ref <- RENAMER(ref, "best", chosen)
+    expect_identical(dbl0, ref)
+
+    chosen <- rbinom(ngenes, 1, 0.2) == 1
+    dbl0 <- findDoubletClusters(counts, clusters, subset.row=chosen)
+    ref <- findDoubletClusters(counts[chosen,], clusters)
+    ref <- RENAMER(ref, "best", which(chosen))
     expect_identical(dbl0, ref)
 
     # Trying out empty rows.

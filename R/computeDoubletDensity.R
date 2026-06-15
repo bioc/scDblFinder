@@ -6,22 +6,23 @@
 #' @param x A numeric matrix-like object of count values, 
 #' where each column corresponds to a cell and each row corresponds to an endogenous gene.
 #' 
-#' Alternatively, a \linkS4class{SummarizedExperiment} or \linkS4class{SingleCellExperiment} object containing such a matrix.
+#' Alternatively, a \linkS4class[SummarizedExperiment]{SummarizedExperiment} or 
+#' \linkS4class[SingleCellExperiment]{SingleCellExperiment} object containing such a matrix.
 #' @param size.factors.norm A numeric vector of size factors for normalization of \code{x} prior to PCA and distance calculations.
 #' If \code{NULL}, defaults to size factors derived from the library sizes of \code{x}.
 #' 
-#' For the SingleCellExperiment method, the default values are taken from \code{\link{sizeFactors}(x)}, if they are available.
+#' For the SingleCellExperiment method, the default values are taken from \code{\link[SingleCellExperiment]{sizeFactors}(x)}, if they are available.
 #' @param size.factors.content A numeric vector of size factors for RNA content normalization of \code{x} prior to simulating doublets.
 #' This is orthogonal to the values in \code{size.factors.norm}, see Details.
 #' @param k An integer scalar specifying the number of nearest neighbours to use to determine the bandwidth for density calculations.
-#' @param subset.row See \code{?"\link{scran-gene-selection}"}.
+#' @param subset.row An optional logical, integer or character vector indicating the rows of x to use.
 #' @param niters An integer scalar specifying how many simulated doublets should be generated.
 #' @param block An integer scalar controlling the rate of doublet generation, to keep memory usage low.
 #' @param dims An integer scalar specifying the number of components to retain after the PCA.
-#' @param BNPARAM A \linkS4class{BiocNeighborParam} object specifying the nearest neighbor algorithm.
-#' This should be an algorithm supported by \code{\link{queryNeighbors}}.
-#' @param BSPARAM A \linkS4class{BiocSingularParam} object specifying the algorithm to use for PCA, if \code{d} is not \code{NA}.
-#' @param BPPARAM A \linkS4class{BiocParallelParam} object specifying whether the neighbour searches should be parallelized.
+#' @param BNPARAM A \linkS4class[BiocNeighbors]{BiocNeighborParam} object specifying the nearest neighbor algorithm.
+#' This should be an algorithm supported by \code{\link[BiocNeighbors]{queryNeighbors}}.
+#' @param BSPARAM A \linkS4class[BiocSingular]{BiocSingularParam} object specifying the algorithm to use for PCA, if \code{d} is not \code{NA}.
+#' @param BPPARAM A \linkS4class[BiocParallel]{BiocParallelParam} object specifying whether the neighbour searches should be parallelized.
 #' @param ... For the generic, additional arguments to pass to specific methods.
 #' 
 #' For the SummarizedExperiment and SingleCellExperiment methods, additional arguments to pass to the ANY method.
@@ -44,7 +45,6 @@
 #' The two size factor arguments have different roles:
 #' \itemize{
 #' \item \code{size.factors.norm} contains the size factors to be used for normalization prior to PCA and distance calculations.
-#' This defaults to the values returned by \code{\link{librarySizeFactors}} but can be explicitly set to ensure that the low-dimensional space is consistent with that in the rest of the analysis.
 #' \item \code{size.factors.content} is much more important, and represents the size factors that preserve RNA content differences.
 #' This is usually computed from spike-in RNA and ensures that the simulated doublets have the correct ratio of contributions from the original cells.
 #' }
@@ -93,7 +93,6 @@
 #' @name computeDoubletDensity
 NULL
 
-#' @importFrom scuttle librarySizeFactors normalizeCounts .bpNotSharedOrUp
 #' @importFrom SingleCellExperiment SingleCellExperiment logcounts
 #' @importFrom BiocParallel SerialParam bpmapply bpstart bpstop
 #' @importFrom Matrix rowMeans
@@ -111,7 +110,7 @@ NULL
     setAutoBPPARAM(BPPARAM)
     on.exit(setAutoBPPARAM(old))
 
-    if (.bpNotSharedOrUp(BPPARAM)){ 
+    if (!bpisup(BPPARAM) && !is(BPPARAM, "MulticoreParam")){ 
         bpstart(BPPARAM)
         on.exit(bpstop(BPPARAM))
     }
@@ -120,7 +119,7 @@ NULL
         x <- x[subset.row,,drop=FALSE]
     }
     if (is.null(size.factors.norm)) {
-        size.factors.norm <- librarySizeFactors(x, BPPARAM=BPPARAM)
+        size.factors.norm <- scrapper::centerSizeFactors(Matrix::colSums(x))
     }
     if(!all(size.factors.norm>0))
         stop("Some size.factors are not positive. This typically happens ",
@@ -130,15 +129,16 @@ NULL
     # Manually controlling the size factor centering here to ensure the final counts are on the same scale.
     size.factors.norm <- size.factors.norm/mean(size.factors.norm)
     if (!is.null(size.factors.content)) {
-        x <- normalizeCounts(x, size.factors.content, log=FALSE, center_size_factors=FALSE)
+        x <- scrapper::normalizeCounts(x, size.factors.content, log=FALSE)
         size.factors.norm <- size.factors.norm/size.factors.content
     }
-    y <- normalizeCounts(x, size.factors.norm, center_size_factors=FALSE)
+    y <- scrapper::normalizeCounts(x, size.factors.norm)
 
     # Running the PCA.
     pc.out <- runPCA(t(y), center=TRUE, BSPARAM=BSPARAM, rank=dims, BPPARAM=BPPARAM)
     pcs <- as.matrix(pc.out$x)
-    sim.pcs <- .spawn_doublet_pcs(x, size.factors.norm, V=pc.out$rotation, centers=rowMeans(y), niters=niters, block=block)
+    sim.pcs <- .spawn_doublet_pcs(x, size.factors.norm, V=pc.out$rotation, 
+                                  centers=rowMeans(y), niters=niters, block=block)
 
     # Computing densities, using a distance computed from the kth nearest neighbor.
     self.dist <- findDistance(pcs, k=k, BNPARAM=BNPARAM, BPPARAM=BPPARAM)
@@ -156,7 +156,7 @@ NULL
 }
 
 #' @importFrom Matrix crossprod
-#' @importFrom scuttle normalizeCounts
+#' @importFrom scrapper normalizeCounts
 #' @importFrom DelayedArray sweep
 .spawn_doublet_pcs <- function(x, size.factors, V, centers, niters=10000L, block=10000L) {
     collected <- list()
@@ -173,7 +173,7 @@ NULL
         # Do not center, otherwise the simulated doublets will always have higher normalized counts
         # than actual doublets (as the latter will have been normalized to the level of singlets).
         sim.sf <- size.factors[left] + size.factors[right]
-        sim.y <- normalizeCounts(sim.x, sim.sf, center_size_factors=FALSE)
+        sim.y <- scrapper::normalizeCounts(sim.x, sim.sf)
 
         # Projecting onto the PC space of the original data.
         sim.pcs <- crossprod(sim.y, V)

@@ -105,18 +105,23 @@ getExpectedDoublets <- function(x, dbr=NULL, only.heterotypic=TRUE,
 #' @param nfeatures The number of features to select.
 #' @param propMarkers The proportion of features to select from markers (rather
 #' than on the basis of high expression). Ignored if `clusters` isn't given.
-#' @param FDR.max The maximum marker binom FDR to be included in the selection.
-#' (see \code{\link[scran]{findMarkers}}).
+#' @param FDR.max Deprecated. Use 'auc.min' instead.
+#' @param auc.min Minimum AUC to consider for marters (this will be the minimum
+#'  of the mean of AUC min, max, median and mean).
 #'
 #' @return A vector of feature (i.e. row) names.
 #' @export
 #'
-#' @importFrom scuttle sumCountsAcrossCells
-#' @importFrom scran findMarkers
+#' @importFrom scrapper scoreMarkers
 #' @examples
 #' sce <- mockDoubletSCE()
 #' selFeatures(sce, clusters=sce$cluster, nfeatures=5)
-selFeatures <- function(sce, clusters=NULL, nfeatures=1000, propMarkers=0, FDR.max=0.05){
+selFeatures <- function(sce, clusters=NULL, nfeatures=1000, propMarkers=0,
+                        auc.min=0.75, FDR.max=NULL){
+  if(!is.null(FDR.max))
+    .Deprecated("d.min", old="FDR.max",
+                msg="The 'FDR.max' argument is deprecated. Use 'd.min' instead.")
+  
   if(nrow(sce)<=nfeatures) return(row.names(sce))
   if(is.null(clusters)) propMarkers <- 0
   g <- c()
@@ -126,7 +131,7 @@ selFeatures <- function(sce, clusters=NULL, nfeatures=1000, propMarkers=0, FDR.m
                                 decreasing=TRUE)[seq_len(ng)]]
     }else{
       g <- tryCatch({
-        cl.means <- as.matrix(assay(scuttle::sumCountsAcrossCells(counts(sce), clusters)))
+        cl.means <- as.matrix(.sumCountsAcrossCells(counts(sce), clusters))
         g <- unique(as.numeric(t(apply(cl.means, 2, FUN=function(x){
           order(x, decreasing=TRUE)[seq_len(nfeatures)]
         }))))[seq_len(ng)]
@@ -138,16 +143,9 @@ selFeatures <- function(sce, clusters=NULL, nfeatures=1000, propMarkers=0, FDR.m
     }
   }
   if(ng==nfeatures) return(g)
-  mm <- scran::findMarkers(sce, groups=clusters, test.type="binom", assay.type="counts")
-	mm <- dplyr::bind_rows(lapply(mm, FUN=function(x){
-	  x <- x[x$FDR<FDR.max,]
-	  data.frame(gene=row.names(x), Top=x$Top, FDR=x$FDR, stringsAsFactors=FALSE)
-	}), .id = "cluster")
-	g2 <- unique(c(g,mm$gene))
-	if(length(g2)<nfeatures) return(g2)
-	i <- nfeatures/(2*length(unique(clusters)))
-	while(length(g <- unique(c(g,mm$gene[mm$Top<=i])))<nfeatures) i<-i+1
-	return(head(g,nfeatures))
+  
+  g2 <- .findMarkers(counts(sce), clusters, ntot=nfeatures, auc.min=auc.min)
+  head(unique(c(g,g2)), nfeatures)
 }
 
 
@@ -346,17 +344,42 @@ cxds2 <- function(x, whichDbls=c(), ntop=500, binThresh=NULL){
   s/max(s)
 }
 
+.findMarkers <- function(e, clusters, ntot=NULL, nper=30L, auc.min=NULL){
+  marker.args <- list()
+  mm <- scoreMarkers(e, clusters, compute.cohens.d=FALSE,
+                     compute.delta.mean=FALSE, compute.group.mean=FALSE)$auc
+  if(is.null(ntot)){
+    targetPerCluster <- ceiling(1.5*ntot/length(mm))
+  }else{
+    targetPerCluster <- nper
+  }
+  mm <- lapply(mm, function(x){
+    x <- rowMeans(as.matrix(x))[,1:4]
+    x <- x[order(-x)]
+    if(!is.null(auc.min)) x <- x[x>=auc.min]
+    if(length(x)<targetPerCluster)
+      x <- c(x, rep(NA_character_, targetPerCluster-length(x)))
+    head(x, targetPerCluster)
+  })
+  if(is.null(ntot)){
+    mm <- unlist(mm)
+    return(unique(mm[!is.na(mm)]))
+  }
+  mm <- matrix(unlist(mm), nrow=length(mm), byrow=TRUE)
+  mm <- unique(as.character(mm))
+  mm[!is.na(mm)]
+}
+
 #' @importFrom stats cor
 .clustSpearman <- function(e, clusters, nMarkers=30){
   if(is.null(dim(clusters))){
     e2 <- e[,seq_along(clusters)]
     g <- seq_len(nrow(e2))
     if(nMarkers>0 & nMarkers<nrow(e)){
-      suppressWarnings(mm <- scran::findMarkers(e2, groups=clusters, test.type="binom"))
-      g <- unique(unlist(lapply(mm, FUN=function(x) row.names(x)[seq_len(nMarkers)])))
+      g <- .findMarkers(e, clusters, nper=nMarkers)
     }
-    e2 <- scuttle::sumCountsAcrossCells(e2[g,], ids=clusters)
-    clusters <- as.matrix(assay(e2))
+    e2 <- .sumCountsAcrossCells(e2[g,], clusters)
+    clusters <- as.matrix(e2)
   }else{
     if(ncol(clusters)>500)
       warning("You're using a very large `clustCor` matrix, are you sure that the",
@@ -415,7 +438,7 @@ propHomotypic <- function(clusters){
   if(is.null(doNorm)) doNorm <- ncol(e)<=50000
   if(doNorm){
     tryCatch({
-      e <- normalizeCounts(e)
+      e <- logNormCounts(e)
     }, error=function(er){
       warning("Error in calculating norm factors:", er)
     })
@@ -579,7 +602,7 @@ directDblClassification <- function(sce, dbr=NULL, processing="default", iter=2,
                     default=.defaultProcessing(e, dims=dims),
                     rawPCA=.defaultProcessing(e, dims=dims, doNorm=FALSE),
                     rawFeatures=t(e),
-                    normFeatures=t(normalizeCounts(e)),
+                    normFeatures=t(logNormCounts(e)),
                     stop("Unknown processing function.")
     )
   }else{
@@ -622,4 +645,30 @@ directDblClassification <- function(sce, dbr=NULL, processing="default", iter=2,
   nc <- seq_len(min(5,ncol(x)))
   colnames(x)[nc] <- c("seqname", "start", "end", "name", "score")[nc]
   return(makeGRangesFromDataFrame(x, keep.extra.columns=TRUE))
+}
+
+# transition from old scuttle-based functions to scrapper...
+logNormCounts <- function(x, sf=NULL){
+  if(is(x, "SingleCellExperiment")){
+    if(is.null(sf)){
+      sf <- sizeFactors(x)
+    }else{
+      sizeFactors(x) <- sf
+    }
+    if(is.null(sf)){
+      sizeFactors(x) <- sf <- centerSizeFactors(Matrix::colSums(counts(x)))
+    }
+    logcounts(x) <- logNormCounts(counts(x), sf)
+    return(x)
+  }
+  if(is.null(sf)) sf <- centerSizeFactors(Matrix::colSums(x))
+  normalizeCounts(x, sf)
+}
+
+# transition from old scuttle-based functions to scrapper...
+.sumCountsAcrossCells <- function(x, f){
+  if(inherits(x, "SingleCellExperiment")) x <- assay(x)
+  ag <- aggregateAcrossCells(x, list(f), compute.sum=TRUE,
+                             compute.detected=FALSE, compute.median=FALSE)
+  ag$sums
 }

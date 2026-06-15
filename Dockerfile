@@ -1,11 +1,7 @@
 FROM bioconductor/bioconductor_docker:devel
-
-MAINTAINER pl.germain@gmail.com
-
-WORKDIR /home/build/package
-
-COPY . /home/build/package 
-
-ENV R_REMOTES_NO_ERRORS_FROM_WARNINGS=true
-
-RUN Rscript -e "devtools::install('.', dependencies=TRUE, repos = BiocManager::repositories(), build_vignettes = TRUE)"
+WORKDIR /home/rstudio/package
+RUN sudo apt-get install libmagick++-dev
+COPY . .
+RUN R -e "install.packages(c('remotes','magick')); options(repos = BiocManager::repositories()); \
+          remotes::install_local('.', dependencies = TRUE, upgrade = 'always')"
+RUN R -e "options(ExperimentHub.ask=FALSE, AnnotationHub.ask=FALSE); sce <- scRNAseq::BachMammaryData(samples=c('G_1','G_2'))"

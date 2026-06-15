@@ -5,8 +5,9 @@
 #' @param x A log-expression matrix for all cells (including doublets) in columns and genes in rows.
 #' If \code{transposed=TRUE}, this should be a matrix of low-dimensional coordinates where each row corresponds to a cell.
 #'
-#' Alternatively, a \linkS4class{SummarizedExperiment} or \linkS4class{SingleCellExperiment} containing 
-#' (i) a log-expression matrix in the \code{\link{assays}} as specified by \code{assay.type},
+#' Alternatively, a \linkS4class[SummarizedExperiment]{SummarizedExperiment} or 
+#' \linkS4class[SingleCellExperiment]{SingleCellExperiment} containing 
+#' (i) a log-expression matrix in the \code{assays} as specified by \code{assay.type},
 #' or (ii) a matrix of reduced dimensions in the \code{\link{reducedDims}} as specified by \code{use.dimred}.
 #' @param doublets A logical, integer or character vector specifying which cells in \code{x} are known (inter-sample) doublets.
 #' @param samples A numeric vector containing the relative proportions of cells from each sample,
@@ -15,24 +16,25 @@
 #' @param transposed Logical scalar indicating whether \code{x} is transposed, i.e., cells in the rows.
 #' @param subset.row A logical, integer or character vector specifying the genes to use for the neighbor search. 
 #' Only used when \code{transposed=FALSE}.
-#' @param BNPARAM A \linkS4class{BiocNeighborParam} object specifying the algorithm to use for the nearest neighbor search.
-#' @param BPPARAM A \linkS4class{BiocParallelParam} object specifying the parallelization to use for the nearest neighbor search.
+#' @param BNPARAM A \linkS4class[BiocNeighbors]{BiocNeighborParam} object specifying the algorithm to use for the nearest neighbor search.
+#' @param BPPARAM A \linkS4class[BiocParallel]{BiocParallelParam} object specifying the parallelization to use for the nearest neighbor search.
 #' @param ... For the generic, additional arguments to pass to specific methods.
 #' 
 #' For the SummarizedExperiment method, additional arguments to pass to the ANY method.
 #'
 #' For the SingleCellExperiment method, additional arguments to pass to the SummarizedExperiment method.
 #' @param assay.type A string specifying which assay values contain the log-expression matrix. 
-#' @param use.dimred A string specifying whether existing values in \code{\link{reducedDims}(x)} should be used.
+#' @param use.dimred A string specifying whether existing values in 
+#'  \code{\link[SingleCellExperiment]{reducedDims}(x)} should be used.
 #'
 #' @return
-#' A \linkS4class{DataFrame} containing one row per cell and the following fields:
+#' A \linkS4class[S4Vectors]{DataFrame} containing one row per cell and the following fields:
 #' \itemize{
 #' \item \code{proportion}, a numeric field containing the proportion of neighbors that are doublets.
 #' \item \code{known}, a logical field indicating whether this cell is a known inter-sample doublet.
 #' \item \code{predicted}, a logical field indicating whether this cell is a predicted intra-sample doublet.
 #' }
-#' The \code{\link{metadata}} contains \code{intra}, a numeric scalar containing the expected number of intra-sample doublets. 
+#' The \code{\link[S4Vectors]{metadata}} contains \code{intra}, a numeric scalar containing the expected number of intra-sample doublets. 
 #'
 #' @details
 #' In multiplexed single-cell experiments, we can detect doublets as libraries with labels for multiple samples.
@@ -52,7 +54,7 @@
 #' @author Aaron Lun
 #' 
 #' @seealso
-#' \code{\link{doubletCells}} and \code{\link{doubletCluster}},
+#' \code{\link{scDblFinder}} and \code{\link{findDoubletClusters}},
 #' for alternative methods of doublet detection when no prior doublet information is available.
 #'
 #' \code{hashedDrops} from the \pkg{DropletUtils} package,
@@ -72,7 +74,7 @@
 #' counts.2 <- matrix(rpois(ngenes*100, mu2), nrow=ngenes) # Pure type 2
 #' counts.m <- matrix(rpois(ngenes*20, mu1+mu2), nrow=ngenes) # Doublets (1 & 2)
 #' all.counts <- cbind(counts.1, counts.2, counts.m)
-#' lcounts <- scuttle::normalizeCounts(all.counts)
+#' lcounts <- scrapper::normalizeCounts(all.counts, colSums(all.counts))
 #' 
 #' # Pretending that half of the doublets are known. Also pretending that 
 #' # the experiment involved two samples of equal size.
@@ -87,7 +89,6 @@ NULL
 #' @importFrom BiocNeighbors findKNN KmknnParam
 #' @importFrom utils head
 #' @importFrom S4Vectors DataFrame metadata metadata<-
-#' @importFrom scuttle .subset2index
 #' @importFrom BiocParallel SerialParam
 .doublet_recovery <- function(x, doublets, samples,
     k=50, transposed=FALSE, subset.row=NULL, BNPARAM=KmknnParam(), BPPARAM=SerialParam()) 
@@ -117,6 +118,35 @@ NULL
     output <- DataFrame(proportion=P, known=is.doublet, predicted=predicted)
     metadata(output)$intra <- intra.doublets
     output
+}
+
+# taken from scuttle
+.subset2index <- function(subset, target, byrow = TRUE){
+  if (is.factor(subset)) {
+    subset <- as.character(subset)
+  }
+  if (is.na(byrow)) {
+    dummy <- seq_along(target)
+    names(dummy) <- names(target)
+  }
+  else if (byrow) {
+    dummy <- seq_len(nrow(target))
+    names(dummy) <- rownames(target)
+  }
+  else {
+    dummy <- seq_len(ncol(target))
+    names(dummy) <- colnames(target)
+  }
+  if (!is.null(subset)) {
+    subset <- dummy[subset]
+    if (any(is.na(subset))) {
+      stop("invalid subset indices specified")
+    }
+  }
+  else {
+    subset <- dummy
+  }
+  unname(subset)
 }
 
 #' @export
