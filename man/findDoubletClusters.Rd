@@ -26,21 +26,20 @@ findDoubletClusters(x, ...)
 \item{x}{A numeric matrix-like object of count values,
 where each column corresponds to a cell and each row corresponds to an endogenous gene.
 
-Alternatively, a \linkS4class[SummarizedExperiment]{SummarizedExperiment} or 
-\linkS4class[SingleCellExperiment]{SingleCellExperiment} object containing such a matrix.}
+Alternatively, a \linkS4class{SummarizedExperiment} or \linkS4class{SingleCellExperiment} object containing such a matrix.}
 
 \item{...}{For the generic, additional arguments to pass to specific methods.
 
+For the ANY method, additional arguments to pass to \code{\link{findMarkers}}.
+
 For the SummarizedExperiment method, additional arguments to pass to the ANY method.
 
-For the SingleCellExperiment method, additional arguments to pass to the SummarizedExperiment method.
-
-For the ANY method, these arguments are ignored.}
+For the SingleCellExperiment method, additional arguments to pass to the SummarizedExperiment method.}
 
 \item{clusters}{A vector of length equal to \code{ncol(x)}, containing cluster identities for all cells.
 If \code{x} is a SingleCellExperiment, this is taken from \code{\link{colLabels}(x)} by default.}
 
-\item{subset.row}{Integer, logical or character vector specifying the subset of rows of \code{x} to use.}
+\item{subset.row}{See \code{?"\link{scran-gene-selection}"}.}
 
 \item{threshold}{A numeric scalar specifying the FDR threshold with which to identify significant genes.}
 
@@ -63,7 +62,7 @@ against the doublet hypothesis for this combination of query and source clusters
 \item{\code{lib.size1}:}{Numeric, ratio of the median library sizes for the first source cluster to the query cluster.}
 \item{\code{lib.size2}:}{Numeric, ratio of the median library sizes for the second source cluster to the query cluster.}
 \item{\code{prop}:}{Numeric, proportion of cells in the query cluster.}
-\item{\code{all.pairs}:}{A \linkS4class[S4Vectors]{SimpleList} object containing the above statistics
+\item{\code{all.pairs}:}{A \linkS4class{SimpleList} object containing the above statistics
 for every pair of potential source clusters, if \code{get.all.pairs=TRUE}.}
 }
 Each row is named according to its query cluster.
@@ -103,7 +102,7 @@ Technically, it could be treated as the Simes combined p-value against the doubl
 However, this does not account for the multiple testing across all pairs of clusters for each chosen cluster,
 especially as we are chosing the pair that is most concordant with the doublet null hypothesis.
 
-We use library size normalization even if existing size factors are present.
+We use library size normalization (via \code{\link{librarySizeFactors}}) even if existing size factors are present.
 This is because intermediate expression of the doublet cluster is not guaranteed for arbitrary size factors.
 For example, expression in the doublet cluster will be higher than that in the source clusters if normalization was performed with spike-in size factors.
 }
@@ -121,6 +120,9 @@ dbl
 Bach K, Pensa S, Grzelak M, Hadfield J, Adams DJ, Marioni JC and Khaled WT (2017).
 Differentiation dynamics of mammary epithelial cells revealed by single-cell RNA sequencing.
 \emph{Nat Commun.} 8, 1:2128.
+}
+\seealso{
+\code{\link{findMarkers}}, to detect DE genes between clusters.
 }
 \author{
 Aaron Lun
